@@ -1,0 +1,289 @@
+---
+title: "SVAR Example Using R"
+author: "Emmanuel Davila"
+date: "7/4/2022"
+header-includes:
+    - \usepackage{setspace}\doublespacing
+output:
+  html_document: default
+  pdf_document: default
+always_allow_html: true  
+---
+
+This is a simple example of how to make a Structural Vector Autoregression in R.
+I used this [video](https://www.youtube.com/watch?v=hwB2TbhqgH0&t=410s) by 
+Justin Eloriagaas as a guide to make this.
+
+
+## Loading Packages and the Data Set
+
+<br>
+
+First we will load the relevant packages to perform our analysis.
+
+<br>
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+
+library(urca) 
+library(vars)
+library(mFilter) 
+library(tseries) 
+library(TSstudio) 
+library(forecast) 
+library(tidyverse)
+
+```
+
+<br>
+
+Next we will load our data set. All data was obtained from the **Federal Reserve 
+Economic Database (FRED)** website. All data is quarterly from Q1 1970 to Q1 2022.
+I will provide the .csv file. The data includes the US output gap, US CPI, and
+the Federal Funds Rate. You will need to replace *~/Documents/Rprojects/svardataex.csv* with
+your own file path.
+
+<br>
+
+```{r}
+
+macro <- read.csv("~/Documents/Rprojects/svardataex.csv")
+head(macro)
+
+```
+
+<br>
+
+## Creating Time Series Objects and Plotting Them
+
+<br>
+
+Now that the data is loaded onto R, we will transform the data into Time Series
+Objects using ts(). We use *start = c(1970,1,1), frequency = 4* to signify that
+our data starts on 1970 January 1, and the frequency is quarterly.
+
+<br>
+
+```{r}
+
+y <- ts(macro$output_gap, start = c(1970,1,1), frequency = 4) 
+pi <- ts(macro$core_cpi, start = c(1970,1,1), frequency = 4) 
+r <- ts(macro$fed_funds_rate, start = c(1970,1,1), frequency = 4)
+
+```
+
+<br>
+
+Lets plot the three series' to make sure they look like they're supposed to.
+
+<br>
+
+```{r, fig.align='center'}
+
+plot(y, main = "Output Gap", xlab = "Time", ylab = "Output Gap") 
+plot(pi, main = "Inflation Rate", xlab = "Time", ylab = "CPI") 
+plot(r, main = "Federal Funds Rate", xlab = "Time", ylab = "FFR")
+
+```
+
+<br>
+
+## Applying Restrictions to the SVAR
+
+<br>
+
+One of the most important parts in creating our SVAR is imposing the restrictions.
+This is done by creating a matrix and ordering it according to economic
+principles and intuition. The matrix represents contemporaneous shocks affecting 
+the variables in the systems.
+
+<br>
+
+<center>$$\begin{bmatrix}
+   y & 0 & 0 \\
+   a_{21} & pi & 0 \\
+   a_{31} & a_{32} & ffr 
+   \end{bmatrix}$$</center>
+
+<br>
+
+The figure above is what our matrix will look like. The output gap (first column) can 
+influence both inflation (second column) and the ffr (third column) in the same period. 
+Inflation influences the ffr but not the output gap in the same period (hence the free
+variable to the left of pi). The ffr does not influence either in the same period 
+(hence the two free variables to the left of ffr). Therefore, the zeros in the upper
+triangular part of the matrix are our restrictions.
+
+<br>
+
+Now we can start creating our matrix. First, we create an **Identity** matrix.
+
+<br>
+
+```{r, fig.align='center'}
+
+amat <- diag(3)
+amat
+
+```
+
+<br>
+
+Then, we assign the free variables to the lower triangular part.
+
+<br>
+
+```{r, fig.align='center'}
+
+amat[2,1] <- NA
+amat[3,1] <- NA
+amat[3,2] <- NA
+amat
+
+```
+
+<br>
+
+Once we estimate our SVAR, the free variables will fill up and replace the *NA*s.
+
+<br>
+
+## Building the Model
+
+<br>
+
+It's finally time to build our model. We will follow the economic intuition we
+discussed previously to bind our variables.
+
+<br>
+
+```{r}
+
+svar1 <- cbind(y, pi, r)
+colnames(svar1) <- c('OutputGap', 'CPI', 'FFR')
+head(svar1)
+
+```
+
+<br>
+
+We also have to select the number of lags that we will use in the model.
+For this, we will use the *VARselect()* function. Since this is quarterly data, 
+we expect a lag order of around four to six. So we will specify a max of
+eight lags, just to be safe.
+
+<br>
+
+```{r}
+
+lagselect <- VARselect(svar1, lag.max = 8, type = "both")
+lagselect$selection
+
+```
+
+<br>
+
+So according to AIC, SBIC, HQIC, and FPE selection criteria, the optimal number of 
+lags for the model is 5.
+
+<br>
+
+## Estimating the Model
+
+<br>
+
+Now that the framework for our model is built, we can estimate it. First, we'll need
+to estimate a regular VAR so we can later impose our restrictions.
+
+<br>
+
+```{r}
+
+varmodel1 <- VAR(svar1, p = 5, season = NULL, exog = NULL, type = "const")
+varmodel1
+
+```
+
+<br>
+
+Next, we will estimate the actual SVAR model. In the *Amat=* option, we will
+input the matrix we created earlier for our restrictions (amat).
+
+<br>
+
+```{r}
+
+svarmodel1 <- SVAR(varmodel1, Amat = amat, Bmat = NULL, hessian = TRUE, 
+              estmethod = c("scoring", "direct"))
+svarmodel1
+
+```
+
+<br>
+
+## Impulse Response Functions
+### Telling the Story
+
+<br>
+
+The final step is to plot our impulse response functions (irf). First, we will see
+what a positive exogenous shock does to the output gap.
+
+<br>
+
+```{r, warning=FALSE, message=FALSE}
+
+svarog <- irf(svarmodel1, impulse = "OutputGap", response = "OutputGap")
+svarog
+plot(svarog)
+
+```
+<br>
+
+As expected, a positive shock to the output gap causes the gap to increase initially.
+But almost immediately it starts to slowly decrease.
+
+<br>
+
+Now let's see how inflation (CPI) responds to a positive shock caused by the output gap.
+
+<br>
+
+```{r, warning=FALSE, message=FALSE}
+
+svarinf <- irf(svarmodel1, impulse = "OutputGap", response = "CPI")
+svarinf
+plot(svarinf)
+
+```
+
+<br>
+
+Inflation increases due to the output gap increase. The increase in the output gap
+overheats the economy, causing inflationary pressures.
+
+<br>
+
+Now we'll see what the Federal Reserve will do to limit inflation.
+
+<br>
+
+```{r, warning=FALSE, message=FALSE}
+svarffr <- irf(svarmodel1, impulse = "CPI", response = "FFR")
+svarffr
+plot(svarffr)
+
+```
+
+<br>
+
+This response is unexpected. Usually, central banks will fight inflation by increasing
+their policy rate. Here we see that the ffr is decreasing. This might be an error, or possibly
+there is a story to tell. This could be the result of the Volcker Disinflation period.
+
+<br>
+
+Hopefully this helps anyone wanting to see an example of how to use SVARs in R.
+
+<br>
+<br>
